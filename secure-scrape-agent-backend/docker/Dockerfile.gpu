@@ -1,0 +1,35 @@
+# GPU-enabled build
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+# Install Node.js
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY prisma ./prisma/
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Build
+RUN npm run build
+
+# Install Playwright
+RUN npx playwright install-deps chromium && \
+    npx playwright install chromium
+
+# Expose ports
+EXPOSE 3000 4000
+
+# Start app
+CMD ["node", "dist/main.js"]

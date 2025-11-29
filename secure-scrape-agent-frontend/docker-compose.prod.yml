@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # ================================
+  # Frontend Production Service
+  # ================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: scrape-agent-frontend:latest
+    container_name: scrape-agent-frontend-prod
+    restart: always
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+      # These are build-time variables, but keeping them here for documentation
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:3004}
+      - VITE_WS_URL=${VITE_WS_URL:-ws://localhost:3004}
+    networks:
+      - scrape-agent-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  scrape-agent-network:
+    driver: bridge

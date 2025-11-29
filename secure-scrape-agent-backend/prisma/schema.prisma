@@ -1,0 +1,272 @@
+// Prisma schema for Secure Scrape Agent
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id            String   @id @default(uuid())
+  url           String   @unique
+  title         String
+  company       String?
+  source        String   // e.g., "linkedin", "indeed", "company_careers"
+  publishedAt   DateTime?
+  scrapedAt     DateTime @default(now())
+  content       String   @db.Text
+  rawHtml       String?  @db.Text
+  metadata      Json?    // Store additional extracted fields
+  
+  // Enhanced content fields
+  canonicalUrl  String?
+  language      String?
+  headings      Json?
+  images        Json?
+  author        Json?
+  
+  // Content analysis
+  summary       String?  @db.Text
+  summaryModel  String?  // AI model used for summary generation
+  tags          String[]
+  contactInfo   Json?    // emails, phones extracted
+  
+  // Vector store reference
+  vectorIds     String[] // IDs in Milvus/Pinecone
+  
+  // Status tracking
+  status        JobStatus @default(PENDING)
+  errorMessage  String?
+  
+  // Relations
+  chunks        Chunk[]
+  providerCalls ProviderCallLog[]
+  publications  Publication[]
+  takedownRequests TakedownRequest[]
+  
+  // Deduplication
+  contentHash   String   @unique
+  
+  // Timestamps
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([source, createdAt])
+  @@index([company])
+  @@index([status])
+  @@index([contentHash])
+  @@map("jobs")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  INDEXED
+  FAILED
+  REMOVED
+}
+
+model Chunk {
+  id          String   @id @default(uuid())
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  content     String   @db.Text
+  position    Int      // Order in the document
+  tokens      Int      // Token count
+  
+  // Vector reference
+  vectorId    String   // ID in Milvus/Pinecone
+  
+  // Embedding metadata
+  embeddingModel String
+  embeddedAt  DateTime @default(now())
+  
+  createdAt   DateTime @default(now())
+
+  @@index([jobId, position])
+  @@map("chunks")
+}
+
+model ProviderCallLog {
+  id            String   @id @default(uuid())
+  jobId         String?
+  job           Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  
+  provider      String   // "openai", "anthropic", "gemini"
+  operation     String   // "embed", "chat", "summarize"
+  model         String
+  
+  inputTokens   Int?
+  outputTokens  Int?
+  totalTokens   Int?
+  
+  estimatedCost Float?
+  latencyMs     Int
+  
+  success       Boolean
+  errorMessage  String?
+  
+  metadata      Json?
+  
+  createdAt     DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([operation])
+  @@map("provider_call_logs")
+}
+
+model Publication {
+  id            String   @id @default(uuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  platform      String   // "twitter", "linkedin", "facebook"
+  content       String   @db.Text
+  scheduledFor  DateTime?
+  publishedAt   DateTime?
+  
+  status        PublicationStatus @default(DRAFT)
+  externalId    String?  // ID from social platform
+  externalUrl   String?
+  
+  errorMessage  String?
+  metadata      Json?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([platform, status])
+  @@index([scheduledFor])
+  @@map("publications")
+}
+
+enum PublicationStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  FAILED
+}
+
+model TakedownRequest {
+  id            String   @id @default(uuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  requestedBy   String
+  reason        String   @db.Text
+  evidence      Json?
+  
+  status        TakedownStatus @default(PENDING)
+  reviewedBy    String?
+  reviewNotes   String?
+  
+  createdAt     DateTime @default(now())
+  reviewedAt    DateTime?
+
+  @@index([status])
+  @@map("takedown_requests")
+}
+
+enum TakedownStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model EmbeddingCache {
+  id          String   @id @default(uuid())
+  contentHash String   @unique // SHA-256 of content
+  embedding   Float[]  // For small embeddings; mainly store reference
+  vectorId    String?  // Reference to vector store
+  model       String
+  provider    String
+  
+  hitCount    Int      @default(0)
+  lastUsedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([contentHash])
+  @@index([lastUsedAt])
+  @@map("embedding_cache")
+}
+
+model Enrichment {
+  id          String   @id @default(uuid())
+  jobId       String   @unique
+  
+  summaryShort     String?  @db.Text
+  summaryExpanded  String?  @db.Text
+  keywords         String[]
+  entities         Json?
+  language         String?
+  sentiment        String?
+  
+  provider    String
+  model       String
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([jobId])
+  @@map("enrichments")
+}
+
+model MappingTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  mappings    Json
+  format      String
+  webhookUrl  String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("mapping_templates")
+}
+
+model ScheduledJob {
+  id             String   @id @default(uuid())
+  name           String
+  cronExpression String
+  urls           String[]
+  source         String
+  enabled        Boolean  @default(true)
+  lastRun        DateTime?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("scheduled_jobs")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model RobotsCache {
+  id          String   @id @default(uuid())
+  domain      String   @unique
+  robotsTxt   String   @db.Text
+  
+  fetchedAt   DateTime @default(now())
+  expiresAt   DateTime
+  
+  @@index([domain])
+  @@index([expiresAt])
+  @@map("robots_cache")
+}
